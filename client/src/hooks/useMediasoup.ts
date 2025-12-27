@@ -13,37 +13,31 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
     const recvTransport = useRef<Transport | null>(null);
 
     const joinRoom = useCallback(async () => {
-        if (!socket) {
-            console.error('❌ Socket is null in joinRoom');
-            return;
-        }
+        if (!socket) return;
 
         console.log('1️⃣ Requesting to Join Room:', roomId);
 
         socket.emit('joinRoom', { roomId }, async (response: any) => {
             if (!response || !response.rtpCapabilities) {
-                console.error('❌ Failed to join room or no RTP caps:', response);
+                console.error('❌ Failed to join room:', response);
                 return;
             }
 
-            console.log('2️⃣ Room Joined. RTP Caps received:', response.rtpCapabilities);
+            console.log('2️⃣ Room Joined. Existing Peers:', response.peers?.length);
 
             try {
-                // Initialize Device
                 device.current = new Device();
                 await device.current.load({ routerRtpCapabilities: response.rtpCapabilities });
-                console.log('3️⃣ Mediasoup Device Loaded:', device.current.handlerName);
 
-                // Initialize Transports
+                // Init Transports
                 await initSendTransport(device.current);
-                await initRecvTransport(device.current);
+                await initRecvTransport(device.current, response.peers || []); // <--- PASS PEERS HERE
 
             } catch (error) {
                 console.error('❌ Device Load Error:', error);
             }
         });
     }, [socket, roomId]);
-
     const initSendTransport = async (currentDevice: Device) => {
         if (!socket) return;
         console.log('4️⃣ Initializing SEND Transport...');
@@ -97,31 +91,34 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
         });
     };
 
-    const initRecvTransport = async (currentDevice: Device) => {
+    // Modify signature to accept existingPeers
+    const initRecvTransport = async (currentDevice: Device, existingPeers: any[]) => {
         if (!socket) return;
         console.log('🔟 Initializing RECV Transport...');
 
         socket.emit('createWebRtcTransport', { consumer: true }, async ({ params }: any) => {
-            if (params.error) {
-                console.error('❌ Server failed to create recv transport');
-                return;
-            }
+            if (params.error) return console.error('❌ Recv Transport Error');
 
             // Create receiving transport
             recvTransport.current = currentDevice.createRecvTransport(params);
 
             // Handle 'connect'
             recvTransport.current.on('connect', ({ dtlsParameters }, callback) => {
-                console.log('1️⃣1️⃣ RECV Transport connecting...');
                 socket.emit('transport-recv-connect', { transportId: recvTransport.current?.id, dtlsParameters });
                 callback();
             });
 
-            // Listen for other users joining
+            // Listen for NEW users
             socket.on('newProducer', ({ producerId, socketId }: any) => {
                 console.log('🔔 New Producer Announced:', producerId);
                 consume(currentDevice, recvTransport.current!, producerId, socketId);
             });
+
+            // --- CRITICAL FIX: CONSUME EXISTING USERS NOW ---
+            for (const peer of existingPeers) {
+                console.log(`♻️ Consuming existing peer ${peer.socketId}`);
+                await consume(currentDevice, recvTransport.current!, peer.producerId, peer.socketId);
+            }
         });
     };
 
@@ -140,8 +137,6 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
                 return;
             }
 
-            console.log('1️⃣2️⃣ Consuming stream:', params.id);
-
             const consumer = await transport.consume({
                 id: params.id,
                 producerId: params.producerId,
@@ -149,16 +144,25 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
                 rtpParameters: params.rtpParameters,
             });
 
-            const { track } = consumer;
-
             // Resume on server
             socket.emit('consumer-resume', { consumerId: consumer.id });
 
+            // --- MERGE LOGIC START ---
             setPeers(prev => {
-                // Dedup
-                if (prev.find(p => p.id === `${socketId}-${consumer.kind}`)) return prev;
-                return [...prev, { id: `${socketId}-${consumer.kind}`, stream: new MediaStream([track]) }];
+                const existingPeer = prev.find(p => p.id === socketId);
+
+                if (existingPeer) {
+                    // 1. If peer exists, just add the new track to their existing stream
+                    console.log(`🔀 Merging ${consumer.kind} track into existing user ${socketId}`);
+                    existingPeer.stream.addTrack(consumer.track);
+                    return [...prev]; // Return new array to force React to update
+                } else {
+                    // 2. If new peer, create new entry
+                    console.log(`👤 New user detected ${socketId}, adding ${consumer.kind}`);
+                    return [...prev, { id: socketId, stream: new MediaStream([consumer.track]) }];
+                }
             });
+            // --- MERGE LOGIC END ---
         });
     };
 
