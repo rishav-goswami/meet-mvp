@@ -1,0 +1,19 @@
+services:
+  server:
+    # On EC2, we remove port mapping and use host networking
+    network_mode: host
+    ports: [] # Clear the ports array
+    environment:
+      # AWS Elastic IP
+      - ANNOUNCED_IP=${EC2_PUBLIC_IP}
+      # On host mode, we bind to local interface
+      - LISTEN_IP=0.0.0.0
+    volumes:
+      # Remove the 'live reload' mount in production
+      - ./server:/app
+
+  coturn:
+    network_mode: host
+    ports: []
+    environment:
+      - EXTERNAL_IP=${EC2_PUBLIC_IP}

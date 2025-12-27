@@ -1,8 +1,5 @@
-# meet-mvp/docker-compose.yml
-version: "3.8"
-
 services:
-  # 1. Redis - The "brain" for room state
+  # 1. Redis
   redis:
     image: redis:alpine
     container_name: meet-redis
@@ -10,38 +7,59 @@ services:
     ports:
       - "6379:6379"
 
-  # 2. Coturn - The "relay" for NAT traversal
+  # 2. Coturn (TURN/STUN)
   coturn:
     image: coturn/coturn:latest
     container_name: meet-coturn
     restart: always
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
     volumes:
-      - ./turnserver.conf:/etc/coturn/turnserver.conf
-    # "host" mode is crucial for WebRTC performance on Linux/AWS
-    # It allows the container to use the host's IP directly.
-    network_mode: host
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf
     environment:
-      # Detects public IP automatically or falls back to localhost
+      # On Windows Docker, this needs to be your LAN IP or Public IP (not 127.0.0.1)
+      # if you want to test from other devices (like a phone).
       - EXTERNAL_IP=${ANNOUNCED_IP:-127.0.0.1}
     command:
       - -c /etc/coturn/turnserver.conf
       - --external-ip=$${EXTERNAL_IP}
 
-  # 3. Backend - Your Node.js + Mediasoup App
+  # 3. Backend (Node 22 + Mediasoup)
   server:
     build: ./server
     container_name: meet-backend
     restart: always
     depends_on:
       - redis
-    # We share the network stack with the host too, so we can access Redis via localhost:6379
-    # (Since in host mode, localhost refers to the actual machine)
-    network_mode: host
+    # Mount the folder for Live Reload
+    volumes:
+      - ./server:/app
+      # CRITICAL: Keep container's node_modules, don't overwrite with local Windows ones
+      - /app/node_modules
     environment:
-      - REDIS_HOST=127.0.0.1
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # For Windows Dev: Announced IP must be accessible by the browser (LAN IP or 127.0.0.1)
       - ANNOUNCED_IP=${ANNOUNCED_IP:-127.0.0.1}
       - LISTEN_IP=0.0.0.0
       - PORT=3000
-# Note: In "network_mode: host", we don't need 'ports' mapping because
-# the container binds directly to the machine's ports (3000, 3478, etc.)
+    # Map ports explicitly since we removed network_mode: host
+    ports:
+      - "3000:3000"
+      - "10000-10100:10000-10100/udp"
+      - "10000-10100:10000-10100/tcp"
+    # Override command to ensure we run in dev mode with hot reload
+    command: npm run dev
+
+  # 4. Nginx (Reverse Proxy)
+  nginx:
+    image: nginx:alpine
+    container_name: meet-nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - server
