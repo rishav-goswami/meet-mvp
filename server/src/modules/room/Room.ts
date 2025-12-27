@@ -1,53 +1,116 @@
-import { Router, WebRtcTransport, Producer, Consumer, Worker } from 'mediasoup/types';
+import { Router, WebRtcTransport, Producer, Consumer } from 'mediasoup/types';
 import { config } from '../../config/config';
 
 interface Peer {
     id: string; // socketId
-    transports: WebRtcTransport[];
-    producers: Producer[];
-    consumers: Consumer[];
+    transports: Map<string, WebRtcTransport>; // transportId -> Transport
+    producers: Map<string, Producer>;         // producerId -> Producer
+    consumers: Map<string, Consumer>;         // consumerId -> Consumer
 }
 
 export class Room {
     public id: string;
-    public router: Router | null = null;
-    public peers: Map<string, Peer> = new Map();
+    public router: Router;
+    private peers: Map<string, Peer> = new Map(); // socketId -> Peer
 
-    constructor(roomId: string) {
+    constructor(roomId: string, router: Router) {
         this.id = roomId;
+        this.router = router;
     }
 
-    async init(worker: Worker) {
-        this.router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
+    // Add a user to the room
+    public addPeer(socketId: string) {
+        this.peers.set(socketId, {
+            id: socketId,
+            transports: new Map(),
+            producers: new Map(),
+            consumers: new Map(),
+        });
     }
 
-    addPeer(peerId: string) {
-        this.peers.set(peerId, { id: peerId, transports: [], producers: [], consumers: [] });
+    // Remove a user
+    public removePeer(socketId: string) {
+        const peer = this.peers.get(socketId);
+        if (!peer) return;
+
+        // Close everything
+        peer.transports.forEach(t => t.close());
+        this.peers.delete(socketId);
     }
 
-    removePeer(peerId: string) {
-        const peer = this.peers.get(peerId);
-        if (peer) {
-            peer.transports.forEach(t => t.close());
-            this.peers.delete(peerId);
+    // 1. Create Transport (Already likely existed, but ensuring it matches)
+    public async createTransport(socketId: string) {
+        const peer = this.peers.get(socketId);
+        if (!peer) throw new Error('Peer not found');
+
+        const transport = await this.router.createWebRtcTransport({
+            listenIps: config.mediasoup.webRtcTransport.listenIps,
+            enableUdp: true,
+            enableTcp: true,
+            preferUdp: true,
+        });
+
+        // Store it
+        peer.transports.set(transport.id, transport);
+
+        return {
+            id: transport.id,
+            iceParameters: transport.iceParameters,
+            iceCandidates: transport.iceCandidates,
+            dtlsParameters: transport.dtlsParameters,
+        };
+    }
+
+    // 2. Connect Transport (DTLS Handshake) - THIS WAS MISSING
+    public async connectTransport(socketId: string, transportId: string, dtlsParameters: any) {
+        const peer = this.peers.get(socketId);
+        if (!peer) throw new Error('Peer not found');
+
+        const transport = peer.transports.get(transportId);
+        if (!transport) throw new Error(`Transport ${transportId} not found`);
+
+        await transport.connect({ dtlsParameters });
+    }
+
+    // 3. Produce (Publish Video/Audio) - THIS WAS MISSING
+    public async produce(socketId: string, transportId: string, kind: any, rtpParameters: any) {
+        const peer = this.peers.get(socketId);
+        if (!peer) throw new Error('Peer not found');
+
+        const transport = peer.transports.get(transportId);
+        if (!transport) throw new Error(`Transport ${transportId} not found`);
+
+        const producer = await transport.produce({ kind, rtpParameters });
+
+        // Store producer
+        peer.producers.set(producer.id, producer);
+
+        return producer;
+    }
+
+    // 4. Consume (Subscribe to Video/Audio) - THIS WAS MISSING
+    public async consume(socketId: string, transportId: string, producerId: string, rtpCapabilities: any) {
+        const peer = this.peers.get(socketId);
+        if (!peer) throw new Error('Peer not found');
+
+        // Check if the router can actually consume this (Codec check)
+        if (!this.router.canConsume({ producerId, rtpCapabilities })) {
+            console.warn(`Cannot consume producer ${producerId}`);
+            return null;
         }
-    }
 
-    async createTransport(peerId: string) {
-        if (!this.router) throw new Error('Router not initialized');
-        const transport = await this.router.createWebRtcTransport(config.mediasoup.webRtcTransport);
+        const transport = peer.transports.get(transportId);
+        if (!transport) throw new Error(`Transport ${transportId} not found`);
 
-        const peer = this.peers.get(peerId);
-        if (peer) peer.transports.push(transport);
+        const consumer = await transport.consume({
+            producerId,
+            rtpCapabilities,
+            paused: true, // Start paused, wait for client to resume
+        });
 
-        return transport;
-    }
+        // Store consumer
+        peer.consumers.set(consumer.id, consumer);
 
-    // ... (Includes connectTransport, produce, consume methods from previous iteration)
-    // Re-add those helper methods here for completeness when implementing
-
-    getProducer(peerId: string, transportId: string) {
-        const peer = this.peers.get(peerId);
-        // Logic to find producer...
+        return consumer;
     }
 }
