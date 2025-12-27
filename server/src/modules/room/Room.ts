@@ -113,4 +113,32 @@ export class Room {
 
         return consumer;
     }
+
+    // 5. Resume Consumer (Turn the video ON)
+    public async resumeConsumer(socketId: string, consumerId: string) {
+        const peer = this.peers.get(socketId);
+        if (!peer) return;
+
+        const consumer = peer.consumers.get(consumerId);
+        if (!consumer) return;
+
+        await consumer.resume();
+    }
+    // 6. Get all active producers (for new joiners)
+    public getActiveProducers(excludeSocketId: string) {
+        const producerList: { producerId: string, socketId: string }[] = [];
+
+        this.peers.forEach((peer, peerId) => {
+            if (peerId === excludeSocketId) return; // Don't send my own streams back to me
+
+            peer.producers.forEach(producer => {
+                producerList.push({
+                    producerId: producer.id,
+                    socketId: peer.id
+                });
+            });
+        });
+
+        return producerList;
+    }
 }

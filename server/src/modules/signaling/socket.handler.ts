@@ -15,7 +15,14 @@ export class SocketHandler {
         socket.join(roomId);
 
         console.log(`👤 User ${socket.id} joined room: ${roomId}`);
-        callback({ rtpCapabilities: room.router?.rtpCapabilities });
+
+        // Get list of existing streams
+        const peers = room.getActiveProducers(socket.id);
+
+        callback({
+          rtpCapabilities: room.router?.rtpCapabilities,
+          peers // <--- SEND THIS LIST
+        });
       } catch (error) {
         console.error('❌ Join Error:', error);
         callback({ error: 'Failed to join' });
@@ -74,7 +81,7 @@ export class SocketHandler {
 
         // Tell everyone else: "New User is sending video!"
         socket.to(roomId).emit('newProducer', {
-          producerId: producer.id, 
+          producerId: producer.id,
           socketId: socket.id
         });
 
@@ -128,13 +135,18 @@ export class SocketHandler {
       }
     });
 
-    // 7. Resume Consumer
+    // 7. Resume Consumer - FIXED: Actually resume the stream!
     socket.on('consumer-resume', async ({ consumerId }) => {
-      // In a real app, you might need to find the consumer and call resume()
-      // But Mediasoup consumers start paused, so this event is often just a signal
-      // For simple implementations, the server can auto-resume or we implement logic:
-      // const consumer = findConsumer(consumerId); consumer.resume();
-      console.log(`▶️ Resuming consumer ${consumerId}`);
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        if (!room) return;
+
+        console.log(`▶️ Resuming consumer ${consumerId}`);
+        await room.resumeConsumer(socket.id, consumerId);
+      } catch (error) {
+        console.error('❌ Resume Error:', error);
+      }
     });
 
     // 8. Disconnect
@@ -151,4 +163,5 @@ export class SocketHandler {
   private getRoomId(socket: Socket): string {
     return Array.from(socket.rooms).find(r => r !== socket.id) || '';
   }
+
 }
