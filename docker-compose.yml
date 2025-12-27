@@ -1,0 +1,47 @@
+# meet-mvp/docker-compose.yml
+version: "3.8"
+
+services:
+  # 1. Redis - The "brain" for room state
+  redis:
+    image: redis:alpine
+    container_name: meet-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # 2. Coturn - The "relay" for NAT traversal
+  coturn:
+    image: coturn/coturn:latest
+    container_name: meet-coturn
+    restart: always
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf
+    # "host" mode is crucial for WebRTC performance on Linux/AWS
+    # It allows the container to use the host's IP directly.
+    network_mode: host
+    environment:
+      # Detects public IP automatically or falls back to localhost
+      - EXTERNAL_IP=${ANNOUNCED_IP:-127.0.0.1}
+    command:
+      - -c /etc/coturn/turnserver.conf
+      - --external-ip=$${EXTERNAL_IP}
+
+  # 3. Backend - Your Node.js + Mediasoup App
+  server:
+    build: ./server
+    container_name: meet-backend
+    restart: always
+    depends_on:
+      - redis
+    # We share the network stack with the host too, so we can access Redis via localhost:6379
+    # (Since in host mode, localhost refers to the actual machine)
+    network_mode: host
+    environment:
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - ANNOUNCED_IP=${ANNOUNCED_IP:-127.0.0.1}
+      - LISTEN_IP=0.0.0.0
+      - PORT=3000
+# Note: In "network_mode: host", we don't need 'ports' mapping because
+# the container binds directly to the machine's ports (3000, 3478, etc.)
