@@ -5,8 +5,19 @@ export class SocketHandler {
   constructor(private io: Server, private roomManager: RoomManager) { }
 
   public handleConnection(socket: Socket) {
-    console.log(`🔌 Client connected: ${socket.id}`);
 
+    const clientToken = socket.handshake.auth.token;
+
+    // Hardcoded check against env variable
+    // In production, you would verify a JWT here
+    if (clientToken !== process.env.AUTH_SECRET) {
+      console.warn(`🛑 Unauthorized connection attempt from ${socket.handshake.address}`);
+      socket.disconnect(true);
+      return;
+    }
+
+
+    console.log(`🔌 Client connected (Auth Passed): ${socket.id}`);
     // 1. Join Room
     socket.on('joinRoom', async ({ roomId }, callback) => {
       try {
