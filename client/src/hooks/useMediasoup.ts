@@ -11,6 +11,11 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
     const device = useRef<Device | null>(null);
     const sendTransport = useRef<Transport | null>(null);
     const recvTransport = useRef<Transport | null>(null);
+    const audioProducerRef = useRef<any | null>(null);
+    const videoProducerRef = useRef<any | null>(null);
+
+    const [micEnabled, setMicEnabled] = useState<boolean>(true);
+    const [camEnabled, setCamEnabled] = useState<boolean>(true);
 
     const joinRoom = useCallback(async () => {
         if (!socket) return;
@@ -82,8 +87,25 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
                 const videoTrack = stream.getVideoTracks()[0];
                 const audioTrack = stream.getAudioTracks()[0];
 
-                if (videoTrack) await sendTransport.current.produce({ track: videoTrack });
-                if (audioTrack) await sendTransport.current.produce({ track: audioTrack });
+                if (videoTrack) {
+                    try {
+                        const videoProducer = await sendTransport.current!.produce({ track: videoTrack });
+                        videoProducerRef.current = videoProducer;
+                        setCamEnabled(Boolean(videoTrack.enabled));
+                    } catch (err) {
+                        console.error('❌ Video produce failed', err);
+                    }
+                }
+
+                if (audioTrack) {
+                    try {
+                        const audioProducer = await sendTransport.current!.produce({ track: audioTrack });
+                        audioProducerRef.current = audioProducer;
+                        setMicEnabled(Boolean(audioTrack.enabled));
+                    } catch (err) {
+                        console.error('❌ Audio produce failed', err);
+                    }
+                }
 
             } catch (err) {
                 console.error("❌ Failed to get local stream/produce:", err);
@@ -166,5 +188,43 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
         });
     };
 
-    return { joinRoom, localStream, peers };
+    const toggleMic = useCallback(() => {
+        if (!localStream) return;
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (!audioTrack) return;
+
+        const newState = !audioTrack.enabled;
+        audioTrack.enabled = newState;
+        setMicEnabled(newState);
+
+        try {
+            if (audioProducerRef.current) {
+                if (!newState) audioProducerRef.current.pause();
+                else audioProducerRef.current.resume();
+            }
+        } catch (err) {
+            console.warn('⚠️ Failed to pause/resume audio producer', err);
+        }
+    }, [localStream]);
+
+    const toggleCam = useCallback(() => {
+        if (!localStream) return;
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+
+        const newState = !videoTrack.enabled;
+        videoTrack.enabled = newState;
+        setCamEnabled(newState);
+
+        try {
+            if (videoProducerRef.current) {
+                if (!newState) videoProducerRef.current.pause();
+                else videoProducerRef.current.resume();
+            }
+        } catch (err) {
+            console.warn('⚠️ Failed to pause/resume video producer', err);
+        }
+    }, [localStream]);
+
+    return { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled };
 };

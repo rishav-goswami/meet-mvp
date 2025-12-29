@@ -10,7 +10,7 @@ function App() {
   const { socket, isConnected, connect } = useSocket(); // <--- Destructure isConnected
 
   // We only run useMediasoup IF we have a socket and a room
-  const { joinRoom, localStream, peers } = useMediasoup(socket, roomId || '');
+  const { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled } = useMediasoup(socket, roomId || '');
 
   const handleJoin = async (id: string, secret: string) => {
     if (id.trim() === '') {
@@ -70,7 +70,7 @@ function App() {
           />
         ))}
       </div>
-      <ControlBar onLeave={() => window.location.reload()} />
+      <ControlBar onLeave={() => window.location.reload()} toggleMic={toggleMic} toggleCam={toggleCam} micEnabled={micEnabled} camEnabled={camEnabled} />
     </div>
   );
 }
