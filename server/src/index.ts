@@ -22,7 +22,8 @@ async function bootstrap() {
     await mediasoupService.initialize();
 
     // 2. Initialize Logic
-    const roomManager = new RoomManager(mediasoupService);
+    // UPDATE: Pass redisService here
+    const roomManager = new RoomManager(mediasoupService, redisService);
     const socketHandler = new SocketHandler(io, roomManager);
 
     // 3. Handle Connections
