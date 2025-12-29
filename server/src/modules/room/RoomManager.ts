@@ -3,7 +3,7 @@ import { MediasoupService } from '../../services/mediasoup.service';
 import { config } from '../../config/config';
 
 export class RoomManager {
-    private rooms: Map<string, Room> = new Map();
+    private rooms: Map<string, Room> = new Map(); // currently using in-memory storage but will switch to Redis later
 
     constructor(private mediasoupService: MediasoupService) { }
 
