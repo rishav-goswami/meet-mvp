@@ -1,5 +1,5 @@
 // client/src/types/index.ts
-import { RtpCapabilities, RtpParameters, DtlsParameters, MediaKind } from 'mediasoup-client/lib/types';
+import type { types } from 'mediasoup-client';
 
 export interface Peer {
   id: string; // The socket ID of the remote user
@@ -8,7 +8,7 @@ export interface Peer {
 
 // Responses from the server
 export interface JoinRoomResponse {
-  rtpCapabilities: RtpCapabilities;
+  rtpCapabilities: types.RtpCapabilities;
 }
 
 export interface CreateTransportResponse {
@@ -16,7 +16,7 @@ export interface CreateTransportResponse {
     id: string;
     iceParameters: any;
     iceCandidates: any;
-    dtlsParameters: DtlsParameters;
+    dtlsParameters: types.DtlsParameters;
   };
 }
 
@@ -28,8 +28,8 @@ export interface ConsumeResponse {
   params: {
     id: string; // Consumer ID
     producerId: string;
-    kind: MediaKind;
-    rtpParameters: RtpParameters;
+    kind: types.MediaKind;
+    rtpParameters: types.RtpParameters;
   };
 }
 

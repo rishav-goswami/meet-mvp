@@ -59,14 +59,14 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
             sendTransport.current = currentDevice.createSendTransport(params);
 
             // Handle 'connect' (DTLS handshake)
-            sendTransport.current.on('connect', ({ dtlsParameters }, callback, errback) => {
+            sendTransport.current.on('connect', ({ dtlsParameters }, callback, _errback) => {
                 console.log('6️⃣ SEND Transport connecting (DTLS)...');
                 socket.emit('transport-connect', { transportId: sendTransport.current?.id, dtlsParameters });
                 callback();
             });
 
             // Handle 'produce' (Server needs RTP params)
-            sendTransport.current.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+            sendTransport.current.on('produce', async ({ kind, rtpParameters }, callback, _errback) => {
                 console.log(`7️⃣ SEND Transport producing ${kind}...`);
                 socket.emit('transport-produce', {
                     transportId: sendTransport.current?.id,
