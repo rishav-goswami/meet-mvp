@@ -1,12 +1,18 @@
 import React, { useEffect, useRef } from 'react';
+import { Crown, UserCheck } from 'lucide-react';
+import { UserRole } from '../types';
+import { StreamingIndicator } from './Streaming/StreamingIndicator';
 
 interface Props {
     stream: MediaStream | null;
     isLocal?: boolean;
     label?: string;
+    role?: UserRole;
+    isStreaming?: boolean;
+    viewerCount?: number;
 }
 
-export const VideoCard: React.FC<Props> = ({ stream, isLocal, label }) => {
+export const VideoCard: React.FC<Props> = ({ stream, isLocal, label, role, isStreaming, viewerCount }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
 
     useEffect(() => {
@@ -39,9 +45,12 @@ export const VideoCard: React.FC<Props> = ({ stream, isLocal, label }) => {
                 playsInline
                 className={`w-full h-full object-cover ${isLocal ? '-scale-x-100' : ''}`}
             />
-            <div className="absolute bottom-3 left-3 bg-black/60 px-2 py-1 rounded text-sm font-medium text-white backdrop-blur-sm">
-                {label || (isLocal ? "You" : "User")}
+            <div className="absolute bottom-3 left-3 bg-black/60 px-2 py-1 rounded text-sm font-medium text-white backdrop-blur-sm flex items-center gap-2">
+                {role === 'host' && <Crown size={14} className="text-yellow-500" />}
+                {role === 'subhost' && <UserCheck size={14} className="text-purple-500" />}
+                <span>{label || (isLocal ? "You" : "User")}</span>
             </div>
+            {isStreaming && <StreamingIndicator isStreaming={isStreaming} viewerCount={viewerCount} />}
         </div>
     );
 };

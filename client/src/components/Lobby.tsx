@@ -3,12 +3,13 @@ import { Video, Users, Lock } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 interface Props {
-    onJoin: (roomId: string, secret: string) => void;
+    onJoin: (roomId: string, secret: string, username?: string) => void;
 }
 
 export const Lobby: React.FC<Props> = ({ onJoin }) => {
     const [roomId, setRoomId] = useState('');
     const [secret, setSecret] = useState('pincodeKart@123'); // Default for ease pincodeKart@123
+    const [username, setUsername] = useState('');
 
     const createRoom = () => {
         if (secret.trim() === '') {
@@ -17,7 +18,7 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
         }
         const newId = uuidv4().slice(0, 8); // Generate short random ID
         setRoomId(newId);
-        onJoin(newId, secret);
+        onJoin(newId, secret, username || undefined);
     };
 
     return (
@@ -32,6 +33,20 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                 </div>
 
                 <div className="space-y-4">
+                    {/* Username Input */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1 flex items-center gap-2">
+                            <Users size={14} /> Your Name
+                        </label>
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            className="w-full bg-dark-900 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition text-white"
+                            placeholder="Enter your name..."
+                        />
+                    </div>
+
                     {/* Security Input */}
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1 flex items-center gap-2">
@@ -65,7 +80,7 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                             placeholder="Enter Room ID"
                         />
                         <button
-                            onClick={() => roomId && onJoin(roomId, secret)}
+                            onClick={() => roomId && onJoin(roomId, secret, username || undefined)}
                             disabled={!roomId}
                             className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition"
                         >

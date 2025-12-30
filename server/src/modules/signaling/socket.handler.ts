@@ -1,38 +1,87 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager } from '../room/RoomManager';
+import { authenticateSocket, AuthenticatedSocket } from '../auth/auth.middleware';
+import { AuthService } from '../auth/auth.service';
+import { RedisService } from '../../services/redis.service';
 
 export class SocketHandler {
-  constructor(private io: Server, private roomManager: RoomManager) { }
+  private authService: AuthService;
+  private redisService: RedisService;
 
-  public handleConnection(socket: Socket) {
+  constructor(private io: Server, private roomManager: RoomManager) {
+    this.authService = AuthService.getInstance();
+    this.redisService = RedisService.getInstance();
+  }
 
-    const clientToken = socket.handshake.auth.token;
-
-    // Hardcoded check against env variable
-    // In production, you would verify a JWT here
-    if (clientToken !== process.env.AUTH_SECRET) {
+  public async handleConnection(socket: Socket) {
+    // Authenticate socket connection
+    const authenticatedSocket = await authenticateSocket(socket);
+    if (!authenticatedSocket) {
       console.warn(`🛑 Unauthorized connection attempt from ${socket.handshake.address}`);
       socket.disconnect(true);
       return;
     }
 
+    const userId = authenticatedSocket.userId;
+    const username = authenticatedSocket.username || `User ${userId?.slice(0, 8)}`;
 
-    console.log(`🔌 Client connected (Auth Passed): ${socket.id}`);
+    console.log(`🔌 Client connected: ${socket.id} (User: ${username}, ID: ${userId})`);
+
+    // Store authenticated socket reference
+    (socket as any).authenticatedSocket = authenticatedSocket;
+
     // 1. Join Room
-    socket.on('joinRoom', async ({ roomId }, callback) => {
+    socket.on('joinRoom', async ({ roomId, username: providedUsername }, callback) => {
       try {
         const room = await this.roomManager.getOrCreateRoom(roomId);
-        room.addPeer(socket.id);
+        
+        // Determine role (first user becomes host)
+        let role: 'host' | 'subhost' | 'participant' = 'participant';
+        if (room.getAllParticipants().length === 0) {
+          role = 'host';
+        }
+
+        // Add peer with user info
+        const displayUsername = providedUsername || username;
+        room.addPeer(socket.id, userId, displayUsername, role);
         socket.join(roomId);
 
-        console.log(`👤 User ${socket.id} joined room: ${roomId}`);
+        // Update Redis
+        if (userId) {
+          await this.redisService.addParticipant(roomId, userId);
+          if (role === 'host') {
+            await this.redisService.setRoomHost(roomId, userId);
+          }
+          await this.redisService.setRoomInfo(roomId, room.getRoomInfo());
+        }
+
+        console.log(`👤 User ${displayUsername} (${userId}) joined room: ${roomId} as ${role}`);
 
         // Get list of existing streams
         const peers = room.getActiveProducers(socket.id);
+        const participants = room.getAllParticipants();
+
+        // Notify others about new participant
+        socket.to(roomId).emit('participantJoined', {
+          userId,
+          username: displayUsername,
+          role,
+          socketId: socket.id,
+        });
 
         callback({
           rtpCapabilities: room.router?.rtpCapabilities,
-          peers // <--- SEND THIS LIST
+          peers,
+          roomInfo: room.getRoomInfo(),
+          participants: participants.map(p => ({
+            userId: p.userId,
+            username: p.username,
+            role: p.role,
+            isMuted: p.isMuted,
+            isVideoEnabled: p.isVideoEnabled,
+          })),
+          userRole: role,
+          userId,
         });
       } catch (error) {
         console.error('❌ Join Error:', error);
@@ -160,19 +209,296 @@ export class SocketHandler {
       }
     });
 
-    // 8. Disconnect
-    socket.on('disconnect', () => {
+    // 8. Host Controls - Mute Participant
+    socket.on('host:muteParticipant', async ({ targetUserId, mute }, callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        if (!room || !currentUserId) {
+          callback({ error: 'Room not found or user not authenticated' });
+          return;
+        }
+
+        // Check permissions
+        if (!room.canPerformHostAction(currentUserId)) {
+          callback({ error: 'Insufficient permissions' });
+          return;
+        }
+
+        const success = room.muteParticipant(targetUserId, mute);
+        if (success) {
+          // Notify the target user
+          const targetParticipant = room.getParticipant(targetUserId);
+          if (targetParticipant) {
+            this.io.to(targetParticipant.socketId).emit('participantMuted', { muted: mute });
+          }
+
+          // Notify all participants
+          this.io.to(roomId).emit('participantUpdated', {
+            userId: targetUserId,
+            isMuted: mute,
+          });
+
+          callback({ success: true });
+        } else {
+          callback({ error: 'Failed to mute participant' });
+        }
+      } catch (error) {
+        console.error('❌ Mute Participant Error:', error);
+        callback({ error: 'Failed to mute participant' });
+      }
+    });
+
+    // 9. Host Controls - Remove Participant
+    socket.on('host:removeParticipant', async ({ targetUserId }, callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        if (!room || !currentUserId) {
+          callback({ error: 'Room not found or user not authenticated' });
+          return;
+        }
+
+        // Only host can remove participants
+        if (!room.isHost(currentUserId)) {
+          callback({ error: 'Only host can remove participants' });
+          return;
+        }
+
+        const targetParticipant = room.getParticipant(targetUserId);
+        if (!targetParticipant) {
+          callback({ error: 'Participant not found' });
+          return;
+        }
+
+        // Cannot remove host
+        if (room.isHost(targetUserId)) {
+          callback({ error: 'Cannot remove host' });
+          return;
+        }
+
+        // Remove peer
+        room.removePeer(targetParticipant.socketId);
+        await this.redisService.removeParticipant(roomId, targetUserId);
+
+        // Notify target to leave
+        this.io.to(targetParticipant.socketId).emit('removedFromRoom');
+
+        // Notify all participants
+        this.io.to(roomId).emit('participantLeft', { userId: targetUserId });
+
+        callback({ success: true });
+      } catch (error) {
+        console.error('❌ Remove Participant Error:', error);
+        callback({ error: 'Failed to remove participant' });
+      }
+    });
+
+    // 10. Host Controls - Assign Sub-host
+    socket.on('host:assignSubHost', async ({ targetUserId }, callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        if (!room || !currentUserId) {
+          callback({ error: 'Room not found or user not authenticated' });
+          return;
+        }
+
+        if (!room.isHost(currentUserId)) {
+          callback({ error: 'Only host can assign sub-hosts' });
+          return;
+        }
+
+        const success = room.updateParticipantRole(targetUserId, 'subhost');
+        if (success) {
+          await this.redisService.addSubHost(roomId, targetUserId);
+          await this.redisService.setRoomInfo(roomId, room.getRoomInfo());
+
+          // Notify all participants
+          this.io.to(roomId).emit('participantRoleChanged', {
+            userId: targetUserId,
+            role: 'subhost',
+          });
+
+          callback({ success: true });
+        } else {
+          callback({ error: 'Failed to assign sub-host' });
+        }
+      } catch (error) {
+        console.error('❌ Assign Sub-host Error:', error);
+        callback({ error: 'Failed to assign sub-host' });
+      }
+    });
+
+    // 11. Chat - Send Message
+    socket.on('chat:sendMessage', async ({ message }, callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        const currentUsername = this.getUsername(socket) || 'Unknown';
+        if (!room || !currentUserId) {
+          callback({ error: 'Not authenticated' });
+          return;
+        }
+
+        if (!room.settings.allowChat) {
+          callback({ error: 'Chat is disabled in this room' });
+          return;
+        }
+
+        const chatMessage = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          userId: currentUserId,
+          username: currentUsername,
+          message: message.trim(),
+          timestamp: Date.now(),
+          type: 'text' as const,
+          roomId,
+        };
+
+        // Store in Redis (keep last 100 messages)
+        await this.redisService.client.lPush(`room:${roomId}:messages`, JSON.stringify(chatMessage));
+        await this.redisService.client.lTrim(`room:${roomId}:messages`, 0, 99);
+
+        // Broadcast to all participants
+        this.io.to(roomId).emit('chat:newMessage', chatMessage);
+
+        callback({ success: true, messageId: chatMessage.id });
+      } catch (error) {
+        console.error('❌ Send Message Error:', error);
+        callback({ error: 'Failed to send message' });
+      }
+    });
+
+    // 12. Chat - Get Message History
+    socket.on('chat:getHistory', async (callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const messages = await this.redisService.client.lRange(`room:${roomId}:messages`, 0, 99);
+        const parsedMessages = messages.map(msg => JSON.parse(msg)).reverse();
+        callback({ messages: parsedMessages });
+      } catch (error) {
+        console.error('❌ Get Chat History Error:', error);
+        callback({ error: 'Failed to get chat history', messages: [] });
+      }
+    });
+
+    // 13. Streaming - Start Stream
+    socket.on('stream:start', async (callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        if (!room || !currentUserId) {
+          callback({ error: 'Room not found or user not authenticated' });
+          return;
+        }
+
+        if (!room.isHost(currentUserId)) {
+          callback({ error: 'Only host can start streaming' });
+          return;
+        }
+
+        // Update stream info in Redis
+        const streamInfo = {
+          roomId,
+          isLive: true,
+          startedAt: Date.now(),
+          viewerCount: 0,
+          streamKey: `${roomId}-${Date.now()}`,
+          hostId: currentUserId,
+        };
+
+        await this.redisService.client.set(`stream:${roomId}`, JSON.stringify(streamInfo));
+
+        // Notify all participants
+        this.io.to(roomId).emit('stream:started', streamInfo);
+
+        callback({ success: true });
+      } catch (error) {
+        console.error('❌ Start Stream Error:', error);
+        callback({ error: 'Failed to start stream' });
+      }
+    });
+
+    // 14. Streaming - Stop Stream
+    socket.on('stream:stop', async (callback) => {
+      try {
+        const roomId = this.getRoomId(socket);
+        const room = this.roomManager.getRoom(roomId);
+        const currentUserId = this.getUserId(socket);
+        if (!room || !currentUserId) {
+          callback({ error: 'Room not found or user not authenticated' });
+          return;
+        }
+
+        if (!room.isHost(currentUserId)) {
+          callback({ error: 'Only host can stop streaming' });
+          return;
+        }
+
+        // Update stream info in Redis
+        await this.redisService.client.del(`stream:${roomId}`);
+
+        // Notify all participants
+        this.io.to(roomId).emit('stream:stopped');
+
+        callback({ success: true });
+      } catch (error) {
+        console.error('❌ Stop Stream Error:', error);
+        callback({ error: 'Failed to stop stream' });
+      }
+    });
+
+    // 15. Disconnect
+    socket.on('disconnect', async () => {
       console.log(`🔌 Client disconnected: ${socket.id}`);
       const roomId = this.getRoomId(socket);
-      if (roomId) {
+      const currentUserId = this.getUserId(socket);
+      const currentUsername = this.getUsername(socket) || 'Unknown';
+      if (roomId && currentUserId) {
         const room = this.roomManager.getRoom(roomId);
-        room?.removePeer(socket.id);
+        if (room) {
+          room.removePeer(socket.id);
+          await this.redisService.removeParticipant(roomId, currentUserId);
+
+          // Notify others
+          this.io.to(roomId).emit('participantLeft', { userId: currentUserId });
+
+          // Send system message
+          if (room.settings.allowChat) {
+            const systemMessage = {
+              id: `${Date.now()}-system`,
+              userId: 'system',
+              username: 'System',
+              message: `${currentUsername} left the room`,
+              timestamp: Date.now(),
+              type: 'system' as const,
+              roomId,
+            };
+            this.io.to(roomId).emit('chat:newMessage', systemMessage);
+          }
+        }
       }
     });
   }
 
   private getRoomId(socket: Socket): string {
     return Array.from(socket.rooms).find(r => r !== socket.id) || '';
+  }
+
+  private getUserId(socket: Socket): string | undefined {
+    const authSocket = (socket as any).authenticatedSocket as AuthenticatedSocket | undefined;
+    return authSocket?.userId;
+  }
+
+  private getUsername(socket: Socket): string | undefined {
+    const authSocket = (socket as any).authenticatedSocket as AuthenticatedSocket | undefined;
+    return authSocket?.username;
   }
 
 }

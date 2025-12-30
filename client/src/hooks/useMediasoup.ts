@@ -226,5 +226,5 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
         }
     }, [localStream]);
 
-    return { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled };
+    return { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport };
 };
