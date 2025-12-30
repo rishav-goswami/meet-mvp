@@ -1,60 +1,113 @@
-# 🚀 WebRTC Video Conference MVP
+# meet-mvp
 
-## 📌 Project Goal
+A minimal, self-hosted WebRTC meeting application (MVP) with optional live-streaming features.
 
-Build a scalable, Google Meet-like video conferencing MVP for 3–5 users using a **Mediasoup SFU** architecture. The focus is on interview-defensible engineering, correct WebRTC handling, and a clear path to hyper-scale.
+This repository contains a full-stack example for building a video meeting app using a Node.js server (Signaling, Mediasoup helpers) and a TypeScript React client. The project includes support for TURN/coturn, Nginx configuration, and Docker compose files for local and production deployments.
 
-## 🛠 Tech Stack
+**Key features**
+- Peer-to-peer and server-assisted WebRTC signaling.
+- Multiplatform client (browser) implemented with Vite + React + TypeScript.
+- Server-side components for signaling and mediasoup integration.
+- Optional live streaming capabilities and host controls.
+- Docker and docker-compose setup for local and production use.
 
-* **Language:** TypeScript (Backend & Frontend)
-* **Frontend:** React (Vite) + `mediasoup-client`
-* **Backend:** Node.js + `mediasoup` + Socket.IO
-* **Infrastructure:** Docker, Docker Compose
-* **Signaling/State:** Redis (for room state & scalability)
-* **NAT Traversal:** Custom Coturn Server (STUN/TURN)
-* **Reverse Proxy:** Nginx (SSL termination & static serving)
+**Repository layout**
+- [client](client): React + Vite frontend (TypeScript).
+- [server](server): Node.js backend and signaling implementation.
+- [coturn](coturn): TURN server config for NAT traversal.
+- [nginx](nginx): Nginx config and TLS certs directory.
+- docker-compose.yml / docker-compose.prod.yml: Local and production orchestration.
 
----
+Getting started
+---------------
 
-## 📅 Iteration Plan
+Prerequisites
 
-### Phase 1: Infrastructure & Foundation (Current Step)
+- Node.js (16+ recommended)
+- pnpm, npm or yarn
+- Docker & Docker Compose (optional, for running with containers)
 
-* [ ] Initialize Project Structure (Monorepo-style: `/server`, `/client`).
-* [ ] **Docker Setup:** Create `docker-compose.yml` for **Redis** and **Coturn**.
-* [ ] **Backend Config:** Initialize TypeScript Node.js project.
-* [ ] **Mediasoup Check:** Verify Mediasoup workers can spawn and bind ports locally.
+Local development (two-terminal approach)
 
-### Phase 2: The SFU Backend (Node.js + Mediasoup)
+1. Start the server
 
-* [ ] **Signaling Server:** Set up Socket.IO with Redis Adapter.
-* [ ] **Room Architecture:** Implement `Room` and `Peer` classes.
-* [ ] **Mediasoup Integration:**
-* Initialize Workers & Router.
-* Implement `createWebRtcTransport`.
-* Implement `produce` (Publish Stream).
-* Implement `consume` (Subscribe Stream).
+	- Open a terminal in the repository root and install server dependencies:
 
-* [ ] **Event Handling:** Handle `join`, `leave`, and `disconnect` gracefully.
+	```bash
+	cd server
+	npm install
+	npm run build
+	npm run start:dev
+	```
 
-### Phase 3: The Frontend Core (React + WebRTC)
+	The server exposes signaling and API endpoints. See [server/src/index.ts](server/src/index.ts) for the entrypoint.
 
-* [ ] **Setup:** Vite React + TypeScript.
-* [ ] **Signal Client:** Create a Socket.IO hook/context for room coordination.
-* [ ] **Mediasoup Client:**
-* Initialize `Device`.
-* Load Router capabilities.
-* Handle `sendTransport` (Local Camera/Mic).
-* Handle `recvTransport` (Remote Streams).
+2. Start the client
 
-### Phase 4: UI & Integration
+	- In another terminal:
 
-* [ ] **Video Grid:** Build a responsive grid for 1 vs. many participants.
-* [ ] **Stream Management:** Handle "New User Joined" and "User Left" UI updates.
-* [ ] **Controls:** Mute/Unmute Audio & Video toggles.
+	```bash
+	cd client
+	npm install
+	npm run dev
+	```
 
-### Phase 5: Production & Defense Prep
+	The client UI is served locally via Vite. Main entry is [client/src/main.tsx](client/src/main.tsx).
 
-* [ ] **Final Docker:** Containerize the Node.js App & Nginx.
-* [ ] **Cloud Sim:** Run full stack with `docker-compose up` simulating a production env.
-* [ ] **Interview Prep:** Finalize answers for "Why SFU?", "How to scale?", "Latency vs. Bandwidth".
+Environment configuration
+-------------------------
+
+Server configuration lives under [server/src/config](server/src/config). Typical environment variables (configure via `.env` or your process manager):
+
+- `PORT` — server port (default: 3000)
+- `NODE_ENV` — environment (development/production)
+- TURN server host/credentials if using coturn
+
+Check [server/src/config/config.ts](server/src/config/config.ts) for current variable names and defaults.
+
+Running with Docker
+-------------------
+
+Start services using Docker Compose (local):
+
+```bash
+docker-compose up --build
+```
+
+For production, review `docker-compose.prod.yml` and the `nginx` and `coturn` configurations before starting.
+
+Architecture notes
+------------------
+
+- The server coordinates signaling between clients and integrates with mediasoup for SFU-style server-side routing when needed.
+- The client provides a meeting UI and optional host controls and streaming UI under `client/src/components`.
+- TURN configuration in `coturn/turnserver.conf` is included as a reference for self-hosting.
+
+Contributing
+------------
+
+Contributions are welcome. When opening issues or PRs:
+
+- Provide a concise description of the bug or feature.
+- Include reproduction steps and expected vs actual behavior.
+- Add unit or integration tests where appropriate.
+
+Maintenance & support
+---------------------
+
+This project is a minimal viable implementation intended for learning and small deployments. For production, carefully review:
+
+- Media server scaling and load balancing
+- Security (TLS termination, secure TURN credentials)
+- Operational monitoring and backups
+
+License
+-------
+
+This repository is provided under the MIT License. See the `LICENSE` file for details.
+
+Contact
+-------
+
+If you have questions about usage or deployment, open an issue on this repository.
+
