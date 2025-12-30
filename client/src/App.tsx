@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useMediasoup } from './hooks/useMediasoup';
 import { useScreenShare } from './hooks/useScreenShare';
@@ -10,8 +10,6 @@ import { ChatPanel } from './components/Chat/ChatPanel';
 import { HostControlPanel } from './components/HostControls/HostControlPanel';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ParticipantInfo, UserRole } from './types';
-import { AuthService } from './services/auth.service';
-
 function AppContent() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
@@ -21,11 +19,10 @@ function AppContent() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isHostControlsOpen, setIsHostControlsOpen] = useState(false);
   const { user, login } = useAuth();
-  const authService = new AuthService();
 
   // Get token from user or use legacy secret
   const token = user?.token
-  const { socket, isConnected, connect } = useSocket(token);
+  const { socket, isConnected } = useSocket(token);
 
   // We only run useMediasoup IF we have a socket and a room
   const { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport } = useMediasoup(socket, roomId || '');
@@ -33,7 +30,7 @@ function AppContent() {
   const { isSharing, startScreenShare, stopScreenShare } = useScreenShare(socket, device, sendTransport);
   const { streamInfo, isStreaming } = useStreaming(socket, userRole, userId);
 
-  const handleJoin = async (id: string, secret: string, providedUsername?: string) => {
+  const handleJoin = async (id: string, _secret: string, providedUsername?: string) => {
     if (id.trim() === '') {
       alert('Please enter a valid Room ID.');
       return;
@@ -58,8 +55,7 @@ function AppContent() {
 
     if (roomId && isConnected && socket) {
       console.log("🚀 TRIGGERING JOIN ROOM NOW");
-      const displayUsername = user?.username || username;
-      joinRoom(displayUsername);
+      joinRoom();
     }
   }, [roomId, isConnected, socket, joinRoom, user, username]);
 

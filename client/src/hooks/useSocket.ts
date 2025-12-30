@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3000';
@@ -8,20 +8,17 @@ export const useSocket = (token?: string) => {
     const [isConnected, setIsConnected] = useState(false);
     const socketRef = useRef<Socket | null>(null);
 
-    const connect = (authToken?: string) => {
-        const tokenToUse = authToken || token;
-        if (!tokenToUse) {
-            console.error('No token provided for socket connection');
-            return null;
+    useEffect(() => {
+        // Only connect if token is provided and not already connected
+        if (!token || socketRef.current?.connected) {
+            return;
         }
-
-        if (socketRef.current?.connected) return socketRef.current;
 
         console.log("🔐 Attempting secure connection...");
 
         const newSocket = io(SOCKET_URL, {
             transports: ['websocket'],
-            auth: { token: tokenToUse },
+            auth: { token },
         });
 
         newSocket.on('connect', () => {
@@ -43,24 +40,26 @@ export const useSocket = (token?: string) => {
         socketRef.current = newSocket;
         setSocket(newSocket);
 
-        return newSocket;
-    };
+        // Cleanup: disconnect on unmount or token change
+        return () => {
+            newSocket.disconnect();
+        };
+    }, [token]); // Only re-run when token changes
 
-    useEffect(() => {
-        // Auto-connect if token is provided
-        if (token && !socketRef.current?.connected) {
-            const newSocket = connect();
-            if (newSocket) {
-                // Connection will be handled by connect function
-            }
+    // Separate callback for manual connection if needed
+    const connect = useCallback((authToken?: string) => {
+        const tokenToUse = authToken || token;
+        if (!tokenToUse) {
+            console.error('No token provided for socket connection');
+            return null;
         }
 
-        return () => {
-            if (socketRef.current) {
-                socketRef.current.disconnect();
-            }
-        };
-    }, [token, connect]);
+        if (socketRef.current?.connected) {
+            return socketRef.current;
+        }
+
+        return socketRef.current;
+    }, [token]);
 
     return { socket, isConnected, connect };
 };
