@@ -11,6 +11,7 @@ export interface Peer {
   stream: MediaStream;
   isMuted?: boolean;
   isVideoEnabled?: boolean;
+  isScreenShare?: boolean; // Indicates if this is a screen share stream
 }
 
 export interface User {

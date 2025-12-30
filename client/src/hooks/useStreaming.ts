@@ -14,10 +14,10 @@ export const useStreaming = (socket: Socket | null, userRole: UserRole, userId: 
     isLive: false,
     startedAt: null,
     viewerCount: 0,
-    hostId: '',
+    hostId: userId, // Store current user's ID as hostId
   });
 
-  const canStartStream = userRole === 'host' && userId === streamInfo.hostId;
+  const canStartStream = userRole === 'host';
 
   useEffect(() => {
     if (!socket) return;

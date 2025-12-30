@@ -34,17 +34,44 @@ export const VideoCard: React.FC<Props> = ({ stream, isLocal, label, role, isStr
                     console.log("Autoplay prevented/pending:", error.name);
                 });
             }
+
+            // 4. Handle track ended events
+            const handleTrackEnded = () => {
+                console.log('Track ended, removing from stream');
+                if (videoEl.srcObject) {
+                    (videoEl.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+                }
+            };
+
+            stream.getTracks().forEach(track => {
+                track.addEventListener('ended', handleTrackEnded);
+            });
+
+            return () => {
+                stream.getTracks().forEach(track => {
+                    track.removeEventListener('ended', handleTrackEnded);
+                });
+            };
+        } else if (videoEl && !stream) {
+            // Clear video if stream is removed
+            videoEl.srcObject = null;
         }
     }, [stream, isLocal]); // Re-run if stream changes
 
     return (
         <div className="relative bg-gray-800 rounded-xl overflow-hidden aspect-video shadow-lg ring-1 ring-gray-700">
-            <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className={`w-full h-full object-cover ${isLocal ? '-scale-x-100' : ''}`}
-            />
+            {!stream || stream.getTracks().length === 0 ? (
+                <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                    <span className="text-gray-500 text-sm">No video</span>
+                </div>
+            ) : (
+                <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    className={`w-full h-full ${isLocal ? 'object-cover -scale-x-100' : 'object-contain'}`}
+                />
+            )}
             <div className="absolute bottom-3 left-3 bg-black/60 px-2 py-1 rounded text-sm font-medium text-white backdrop-blur-sm flex items-center gap-2">
                 {role === 'host' && <Crown size={14} className="text-yellow-500" />}
                 {role === 'subhost' && <UserCheck size={14} className="text-purple-500" />}

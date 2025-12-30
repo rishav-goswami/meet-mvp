@@ -66,12 +66,13 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
             });
 
             // Handle 'produce' (Server needs RTP params)
-            sendTransport.current.on('produce', async ({ kind, rtpParameters }, callback, _errback) => {
-                console.log(`7️⃣ SEND Transport producing ${kind}...`);
+            sendTransport.current.on('produce', async ({ kind, rtpParameters, appData }, callback, _errback) => {
+                console.log(`7️⃣ SEND Transport producing ${kind}${appData?.source === 'screen' ? ' (SCREEN SHARE)' : ''}...`);
                 socket.emit('transport-produce', {
                     transportId: sendTransport.current?.id,
                     kind,
-                    rtpParameters
+                    rtpParameters,
+                    appData: appData || {}
                 }, ({ id }: any) => {
                     console.log(`8️⃣ Producer Created on Server. ID: ${id}`);
                     callback({ id });
@@ -131,20 +132,40 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
             });
 
             // Listen for NEW users
-            socket.on('newProducer', ({ producerId, socketId }: any) => {
-                console.log('🔔 New Producer Announced:', producerId);
-                consume(currentDevice, recvTransport.current!, producerId, socketId);
-            });
+            const newProducerHandler = ({ producerId, socketId, kind, appData }: any) => {
+                const isScreenShare = appData?.source === 'screen';
+                console.log(`🔔 New Producer Announced: ${producerId} (${kind}${isScreenShare ? ' - SCREEN SHARE' : ''})`);
+                consume(currentDevice, recvTransport.current!, producerId, socketId, isScreenShare);
+            };
+            socket.on('newProducer', newProducerHandler);
+
+            // Listen for participant leaving to cleanup peers
+            const participantLeftHandler = ({ socketId }: any) => {
+                if (socketId) {
+                    console.log(`🧹 Cleaning up peer: ${socketId}`);
+                    setPeers(prev => {
+                        // Remove all streams from this socket (including screen shares)
+                        return prev.filter(p => !p.id.startsWith(socketId));
+                    });
+                }
+            };
+            socket.on('participantLeft', participantLeftHandler);
 
             // --- CRITICAL FIX: CONSUME EXISTING USERS NOW ---
             for (const peer of existingPeers) {
                 console.log(`♻️ Consuming existing peer ${peer.socketId}`);
-                await consume(currentDevice, recvTransport.current!, peer.producerId, peer.socketId);
+                await consume(currentDevice, recvTransport.current!, peer.producerId, peer.socketId, false);
             }
+
+            // Cleanup function
+            return () => {
+                socket.off('newProducer', newProducerHandler);
+                socket.off('participantLeft', participantLeftHandler);
+            };
         });
     };
 
-    const consume = async (currentDevice: Device, transport: Transport, producerId: string, socketId: string) => {
+    const consume = async (currentDevice: Device, transport: Transport, producerId: string, socketId: string, isScreenShare: boolean = false) => {
         if (!socket) return;
 
         const { rtpCapabilities } = currentDevice;
@@ -166,22 +187,54 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
                 rtpParameters: params.rtpParameters,
             });
 
-            // Resume on server
-            socket.emit('consumer-resume', { consumerId: consumer.id });
+            // Resume on server (even if already playing, this ensures it's active)
+            socket.emit('consumer-resume', { consumerId: consumer.id }, () => {
+                // Force track to be enabled after resume
+                if (consumer.track) {
+                    consumer.track.enabled = true;
+                    console.log(`✅ Consumer ${consumer.id} resumed, track enabled: ${consumer.track.enabled}`);
+                }
+            });
 
             // --- MERGE LOGIC START ---
             setPeers(prev => {
-                const existingPeer = prev.find(p => p.id === socketId);
+                // For screen shares, create a separate peer entry
+                if (isScreenShare && consumer.kind === 'video') {
+                    const screenShareId = `${socketId}-screen`;
+                    // Remove any existing screen share from this user
+                    const filtered = prev.filter(p => p.id !== screenShareId);
+                    console.log(`📺 Adding screen share from ${socketId}, track ID: ${consumer.track.id}, enabled: ${consumer.track.enabled}`);
+                    const newStream = new MediaStream([consumer.track]);
+                    // Ensure track is enabled
+                    consumer.track.enabled = true;
+                    return [...filtered, {
+                        id: screenShareId,
+                        stream: newStream,
+                        isScreenShare: true
+                    }];
+                }
+
+                const existingPeer = prev.find(p => p.id === socketId && !p.isScreenShare);
 
                 if (existingPeer) {
-                    // 1. If peer exists, just add the new track to their existing stream
-                    console.log(`🔀 Merging ${consumer.kind} track into existing user ${socketId}`);
-                    existingPeer.stream.addTrack(consumer.track);
+                    // 1. If peer exists, check if track already exists
+                    const trackExists = existingPeer.stream.getTracks().some(t => t.id === consumer.track.id);
+                    if (!trackExists) {
+                        console.log(`🔀 Merging ${consumer.kind} track into existing user ${socketId}`);
+                        existingPeer.stream.addTrack(consumer.track);
+                        consumer.track.enabled = true;
+                    }
                     return [...prev]; // Return new array to force React to update
                 } else {
                     // 2. If new peer, create new entry
                     console.log(`👤 New user detected ${socketId}, adding ${consumer.kind}`);
-                    return [...prev, { id: socketId, stream: new MediaStream([consumer.track]) }];
+                    consumer.track.enabled = true;
+                    const newPeer = { 
+                        id: socketId, 
+                        stream: new MediaStream([consumer.track]),
+                        isScreenShare: false
+                    };
+                    return [...prev, newPeer];
                 }
             });
             // --- MERGE LOGIC END ---
@@ -226,5 +279,5 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
         }
     }, [localStream]);
 
-    return { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport };
+    return { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport, videoProducerRef, setLocalStream };
 };

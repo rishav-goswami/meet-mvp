@@ -128,21 +128,25 @@ export class SocketHandler {
     });
 
     // 4. Produce (Publish Media) - THIS WAS MISSING
-    socket.on('transport-produce', async ({ transportId, kind, rtpParameters }, callback) => {
+    socket.on('transport-produce', async ({ transportId, kind, rtpParameters, appData }, callback) => {
       try {
         const roomId = this.getRoomId(socket);
         const room = this.roomManager.getRoom(roomId);
         if (!room) throw new Error('Room not found');
 
-        console.log(`🎥 User ${socket.id} producing ${kind}`);
+        const isScreenShare = appData?.source === 'screen';
+        console.log(`🎥 User ${socket.id} producing ${kind}${isScreenShare ? ' (SCREEN SHARE)' : ''}`);
+        
         const producer = await room.produce(socket.id, transportId, kind, rtpParameters);
 
         if (!producer) throw new Error('Producer creation failed');
 
-        // Tell everyone else: "New User is sending video!"
+        // Tell everyone else: "New User is sending video/audio!"
         socket.to(roomId).emit('newProducer', {
           producerId: producer.id,
-          socketId: socket.id
+          socketId: socket.id,
+          kind: kind,
+          appData: appData || {}
         });
 
         callback({ id: producer.id });
@@ -466,8 +470,11 @@ export class SocketHandler {
           room.removePeer(socket.id);
           await this.redisService.removeParticipant(roomId, currentUserId);
 
-          // Notify others
-          this.io.to(roomId).emit('participantLeft', { userId: currentUserId });
+          // Notify others with socketId for cleanup
+          this.io.to(roomId).emit('participantLeft', { 
+            userId: currentUserId,
+            socketId: socket.id
+          });
 
           // Send system message
           if (room.settings.allowChat) {

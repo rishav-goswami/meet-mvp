@@ -1,24 +1,21 @@
 import React, { useState } from 'react';
-import { Video, Users, Lock } from 'lucide-react';
+import { Video, Users } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
     onJoin: (roomId: string, secret: string, username?: string) => void;
 }
 
 export const Lobby: React.FC<Props> = ({ onJoin }) => {
+    const { user } = useAuth();
     const [roomId, setRoomId] = useState('');
-    const [secret, setSecret] = useState('pincodeKart@123'); // Default for ease pincodeKart@123
-    const [username, setUsername] = useState('');
+    const [displayName, setDisplayName] = useState(user?.username || '');
 
     const createRoom = () => {
-        if (secret.trim() === '') {
-            alert('Please enter the server password to create a room.');
-            return;
-        }
         const newId = uuidv4().slice(0, 8); // Generate short random ID
         setRoomId(newId);
-        onJoin(newId, secret, username || undefined);
+        onJoin(newId, '', displayName || user?.username || undefined);
     };
 
     return (
@@ -33,32 +30,19 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                 </div>
 
                 <div className="space-y-4">
-                    {/* Username Input */}
+                    {/* Display Name Input (optional override) */}
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1 flex items-center gap-2">
-                            <Users size={14} /> Your Name
+                            <Users size={14} /> Display Name
                         </label>
                         <input
                             type="text"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
+                            value={displayName}
+                            onChange={(e) => setDisplayName(e.target.value)}
                             className="w-full bg-dark-900 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition text-white"
-                            placeholder="Enter your name..."
+                            placeholder={user?.username || "Enter your display name..."}
                         />
-                    </div>
-
-                    {/* Security Input */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1 flex items-center gap-2">
-                            <Lock size={14} /> Server Password
-                        </label>
-                        <input
-                            type="password"
-                            value={secret}
-                            onChange={(e) => setSecret(e.target.value)}
-                            className="w-full bg-dark-900 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition"
-                            placeholder="Enter server secret..."
-                        />
+                        <p className="text-xs text-gray-500 mt-1">Logged in as: {user?.username}</p>
                     </div>
 
                     <div className="relative my-6">
@@ -75,13 +59,14 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                         <input
                             type="text"
                             value={roomId}
-                            onChange={(e) => setRoomId(e.target.value)}
-                            className="flex-1 bg-dark-900 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                            onChange={(e) => setRoomId(e.target.value.toUpperCase())}
+                            className="flex-1 bg-dark-900 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
                             placeholder="Enter Room ID"
+                            maxLength={8}
                         />
                         <button
-                            onClick={() => roomId && onJoin(roomId, secret, username || undefined)}
-                            disabled={!roomId}
+                            onClick={() => roomId && onJoin(roomId, '', displayName || user?.username || undefined)}
+                            disabled={!roomId || roomId.length < 4}
                             className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition"
                         >
                             Join
@@ -92,7 +77,7 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                         onClick={createRoom}
                         className="w-full bg-blue-600 hover:bg-blue-500 text-white px-6 py-4 rounded-lg font-medium transition flex items-center justify-center gap-2 mt-4 shadow-lg hover:shadow-blue-500/20"
                     >
-                        <Users size={20} />
+                        <Video size={20} />
                         Create New Meeting
                     </button>
                 </div>

@@ -20,8 +20,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignup }) => {
 
     try {
       await login(username, password);
-    } catch (err: any) {
-      setError(err.message || 'Login failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -56,7 +56,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignup }) => {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-400 mb-1 flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-1">
             <Lock size={14} /> Password
           </label>
           <input

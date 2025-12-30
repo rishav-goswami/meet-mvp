@@ -249,9 +249,21 @@ export class Room {
         const peer = this.peers.get(socketId);
         if (!peer) throw new Error('Peer not found');
 
+        // Find the producer across all peers
+        let producer: Producer | null = null;
+        for (const [_, p] of this.peers) {
+            producer = p.producers.get(producerId) || null;
+            if (producer) break;
+        }
+
+        if (!producer) {
+            console.warn(`Producer ${producerId} not found in room`);
+            return null;
+        }
+
         // Check if the router can actually consume this (Codec check)
         if (!this.router.canConsume({ producerId, rtpCapabilities })) {
-            console.warn(`Cannot consume producer ${producerId}`);
+            console.warn(`Cannot consume producer ${producerId} - codec mismatch`);
             return null;
         }
 
@@ -261,7 +273,7 @@ export class Room {
         const consumer = await transport.consume({
             producerId,
             rtpCapabilities,
-            paused: true, // Start paused, wait for client to resume
+            paused: false, // Start playing immediately
         });
 
         // Store consumer

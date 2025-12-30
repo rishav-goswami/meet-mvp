@@ -32,9 +32,9 @@ function AppContent() {
   const { socket, isConnected } = useSocket(token);
 
   // We only run useMediasoup IF we have a socket and a room
-  const { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport } = useMediasoup(socket, roomId || '');
+  const { joinRoom, localStream, peers, toggleMic, toggleCam, micEnabled, camEnabled, device, sendTransport, videoProducerRef, setLocalStream } = useMediasoup(socket, roomId || '');
   
-  const { isSharing, startScreenShare, stopScreenShare } = useScreenShare(socket, device, sendTransport);
+  const { isSharing, startScreenShare, stopScreenShare } = useScreenShare(socket, device, sendTransport, videoProducerRef, setLocalStream, localStream);
   const { streamInfo, isStreaming } = useStreaming(socket, userRole, userId);
 
   const handleJoin = async (id: string, _secret: string, providedUsername?: string) => {
@@ -85,8 +85,19 @@ function AppContent() {
       });
     };
 
-    const handleParticipantLeft = (data: { userId: string }) => {
+    const handleParticipantLeft = (data: { userId: string; socketId?: string }) => {
       setParticipants(prev => prev.filter(p => p.userId !== data.userId));
+      
+      // Remove peer streams when participant leaves
+      if (data.socketId) {
+        // This will be handled by useMediasoup cleanup
+        console.log(`👋 Participant left: ${data.userId} (socket: ${data.socketId})`);
+      }
+    };
+
+    const handleRemovedFromRoom = () => {
+      alert('You have been removed from the room by the host.');
+      window.location.reload();
     };
 
     const handleParticipantUpdated = (data: { userId: string; isMuted?: boolean; isVideoEnabled?: boolean }) => {
@@ -113,6 +124,7 @@ function AppContent() {
     socket.on('participantLeft', handleParticipantLeft);
     socket.on('participantUpdated', handleParticipantUpdated);
     socket.on('participantRoleChanged', handleParticipantRoleChanged);
+    socket.on('removedFromRoom', handleRemovedFromRoom);
 
     return () => {
       socket.off('joinRoom', handleJoinResponse);
@@ -120,6 +132,7 @@ function AppContent() {
       socket.off('participantLeft', handleParticipantLeft);
       socket.off('participantUpdated', handleParticipantUpdated);
       socket.off('participantRoleChanged', handleParticipantRoleChanged);
+      socket.off('removedFromRoom', handleRemovedFromRoom);
     };
   }, [socket, userId]);
 
@@ -165,12 +178,18 @@ function AppContent() {
           />
         )}
         {peers.map((peer) => {
-          const peerInfo = getPeerInfo(peer.id);
+          // Extract socketId from peer.id (screen shares have format: socketId-screen)
+          const socketId = peer.isScreenShare ? peer.id.replace('-screen', '') : peer.id;
+          const peerInfo = getPeerInfo(socketId);
+          const isScreenShare = peer.isScreenShare;
+          const displayName = isScreenShare 
+            ? `${peerInfo?.username || peer.username || 'User'}'s Screen`
+            : (peer.username || peerInfo?.username || `User ${socketId.slice(0, 4)}`);
           return (
             <VideoCard
               key={peer.id}
               stream={peer.stream}
-              label={peer.username || peerInfo?.username || `User ${peer.id.slice(0, 4)}`}
+              label={displayName}
               role={peer.role || peerInfo?.role}
               isStreaming={false}
             />
