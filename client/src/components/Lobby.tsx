@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
-    onJoin: (roomId: string, secret: string, username?: string) => void;
+    onJoin: (roomId: string, username?: string) => void;
 }
 
 export const Lobby: React.FC<Props> = ({ onJoin }) => {
@@ -13,9 +13,9 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
     const [displayName, setDisplayName] = useState(user?.username || '');
 
     const createRoom = () => {
-        const newId = uuidv4().slice(0, 8); // Generate short random ID
+        const newId = uuidv4().slice(0, 8).toUpperCase(); // Generate short random ID
         setRoomId(newId);
-        onJoin(newId, '', displayName || user?.username || undefined);
+        onJoin(newId, displayName || user?.username || undefined);
     };
 
     return (
@@ -65,7 +65,7 @@ export const Lobby: React.FC<Props> = ({ onJoin }) => {
                             maxLength={8}
                         />
                         <button
-                            onClick={() => roomId && onJoin(roomId, '', displayName || user?.username || undefined)}
+                            onClick={() => roomId && onJoin(roomId, displayName || user?.username || undefined)}
                             disabled={!roomId || roomId.length < 4}
                             className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition"
                         >

@@ -50,9 +50,10 @@ export class RedisService {
         await this.client.del(`room:${roomId}:subhosts`);
     }
 
-    // Store room info
+    // Store room info with TTL
     public async setRoomInfo(roomId: string, roomInfo: any) {
         await this.client.set(`room:${roomId}:info`, JSON.stringify(roomInfo));
+        await this.client.expire(`room:${roomId}:info`, 3600); // 1 hour TTL
     }
 
     // Get room info
@@ -61,19 +62,62 @@ export class RedisService {
         return data ? JSON.parse(data) : null;
     }
 
-    // Add participant to room
-    public async addParticipant(roomId: string, userId: string) {
+    // Clean up all room data (used when room is empty)
+    public async cleanupRoom(roomId: string) {
+        const participants = await this.getParticipants(roomId);
+        // Clean up all user socket tracking
+        for (const userId of participants) {
+            await this.client.del(`room:${roomId}:user:${userId}:sockets`);
+        }
+        // Clean up room data
+        await this.removeRoom(roomId);
+    }
+
+    // Add participant to room with socket tracking and TTL
+    public async addParticipant(roomId: string, userId: string, socketId: string) {
+        // Add to participants set
         await this.client.sAdd(`room:${roomId}:participants`, userId);
+        // Track socket for this user (supports multiple sockets per user)
+        await this.client.sAdd(`room:${roomId}:user:${userId}:sockets`, socketId);
+        // Set TTL on socket tracking (1 hour)
+        await this.client.expire(`room:${roomId}:user:${userId}:sockets`, 3600);
+        // Set participant entry with TTL (1 hour)
+        await this.client.expire(`room:${roomId}:participants`, 3600);
     }
 
     // Remove participant from room
-    public async removeParticipant(roomId: string, userId: string) {
-        await this.client.sRem(`room:${roomId}:participants`, userId);
+    public async removeParticipant(roomId: string, userId: string, socketId?: string) {
+        if (socketId) {
+            // Remove specific socket
+            await this.client.sRem(`room:${roomId}:user:${userId}:sockets`, socketId);
+            // Check if user has any other active sockets
+            const remainingSockets = await this.client.sMembers(`room:${roomId}:user:${userId}:sockets`);
+            if (remainingSockets.length === 0) {
+                // No more sockets for this user, remove from participants
+                await this.client.sRem(`room:${roomId}:participants`, userId);
+                await this.client.del(`room:${roomId}:user:${userId}:sockets`);
+            }
+        } else {
+            // Remove all sockets for this user
+            await this.client.sRem(`room:${roomId}:participants`, userId);
+            await this.client.del(`room:${roomId}:user:${userId}:sockets`);
+        }
     }
 
     // Get all participants in room
     public async getParticipants(roomId: string): Promise<string[]> {
         return await this.client.sMembers(`room:${roomId}:participants`);
+    }
+
+    // Get all sockets for a user in a room
+    public async getUserSockets(roomId: string, userId: string): Promise<string[]> {
+        return await this.client.sMembers(`room:${roomId}:user:${userId}:sockets`);
+    }
+
+    // Check if user has active sockets in room
+    public async hasActiveSockets(roomId: string, userId: string): Promise<boolean> {
+        const sockets = await this.getUserSockets(roomId, userId);
+        return sockets.length > 0;
     }
 
     // Set room host

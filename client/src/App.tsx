@@ -37,7 +37,7 @@ function AppContent() {
   const { isSharing, startScreenShare, stopScreenShare } = useScreenShare(socket, device, sendTransport, videoProducerRef, setLocalStream, localStream);
   const { streamInfo, isStreaming } = useStreaming(socket, userRole, userId);
 
-  const handleJoin = async (id: string, _secret: string, providedUsername?: string) => {
+  const handleJoin = async (id: string, providedUsername?: string) => {
     if (id.trim() === '') {
       alert('Please enter a valid Room ID.');
       return;
@@ -85,14 +85,43 @@ function AppContent() {
       });
     };
 
-    const handleParticipantLeft = (data: { userId: string; socketId?: string }) => {
-      setParticipants(prev => prev.filter(p => p.userId !== data.userId));
-      
-      // Remove peer streams when participant leaves
-      if (data.socketId) {
-        // This will be handled by useMediasoup cleanup
-        console.log(`👋 Participant left: ${data.userId} (socket: ${data.socketId})`);
+    const handleParticipantLeft = (data: { userId: string; socketId?: string; fullyLeft?: boolean }) => {
+      // If user fully left, remove from participants list
+      if (data.fullyLeft !== false) {
+        setParticipants(prev => prev.filter(p => p.userId !== data.userId));
       }
+      
+      // Remove peer streams when participant leaves (handled by useMediasoup)
+      if (data.socketId) {
+        console.log(`👋 Participant left: ${data.userId} (socket: ${data.socketId}, fullyLeft: ${data.fullyLeft})`);
+      }
+    };
+
+    const handleParticipantRejoined = (data: { userId: string; username: string; role: UserRole; socketId: string }) => {
+      // Update participant with new socketId
+      setParticipants(prev => {
+        const exists = prev.find(p => p.userId === data.userId);
+        if (exists) {
+          // Update existing participant with new socketId
+          return prev.map(p => 
+            p.userId === data.userId 
+              ? { ...p, socketId: data.socketId, role: data.role }
+              : p
+          );
+        } else {
+          // Add as new participant
+          return [...prev, {
+            userId: data.userId,
+            username: data.username,
+            role: data.role,
+            socketId: data.socketId,
+            joinedAt: Date.now(),
+            isMuted: false,
+            isVideoEnabled: true,
+          }];
+        }
+      });
+      console.log(`🔄 Participant rejoined: ${data.userId} with new socket ${data.socketId}`);
     };
 
     const handleRemovedFromRoom = () => {
@@ -121,6 +150,7 @@ function AppContent() {
 
     socket.on('joinRoom', handleJoinResponse);
     socket.on('participantJoined', handleParticipantJoined);
+    socket.on('participantRejoined', handleParticipantRejoined);
     socket.on('participantLeft', handleParticipantLeft);
     socket.on('participantUpdated', handleParticipantUpdated);
     socket.on('participantRoleChanged', handleParticipantRoleChanged);
@@ -129,6 +159,7 @@ function AppContent() {
     return () => {
       socket.off('joinRoom', handleJoinResponse);
       socket.off('participantJoined', handleParticipantJoined);
+      socket.off('participantRejoined', handleParticipantRejoined);
       socket.off('participantLeft', handleParticipantLeft);
       socket.off('participantUpdated', handleParticipantUpdated);
       socket.off('participantRoleChanged', handleParticipantRoleChanged);

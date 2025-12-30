@@ -35,39 +35,80 @@ export class SocketHandler {
       try {
         const room = await this.roomManager.getOrCreateRoom(roomId);
         
-        // Determine role (first user becomes host)
+        // Check if user is rejoining (has other active sockets in Redis)
+        let isRejoin = false;
+        if (userId) {
+          const hasActiveSockets = await this.redisService.hasActiveSockets(roomId, userId);
+          if (hasActiveSockets) {
+            isRejoin = true;
+            console.log(`🔄 User ${userId} is rejoining room ${roomId}`);
+            // Get old sockets and clean them up
+            const oldSockets = await this.redisService.getUserSockets(roomId, userId);
+            for (const oldSocketId of oldSockets) {
+              // Check if old socket still exists in room
+              const oldPeer = room.getParticipantBySocket(oldSocketId);
+              if (oldPeer) {
+                console.log(`  🧹 Cleaning up old socket: ${oldSocketId}`);
+                room.removePeer(oldSocketId);
+                // Notify others that old socket is leaving
+                this.io.to(roomId).emit('participantLeft', {
+                  userId,
+                  socketId: oldSocketId,
+                });
+              }
+            }
+          }
+        }
+        
+        // Determine role (first user becomes host, or preserve role on rejoin)
         let role: 'host' | 'subhost' | 'participant' = 'participant';
         if (room.getAllParticipants().length === 0) {
           role = 'host';
+        } else if (userId) {
+          // Check if user was host/subhost before
+          const existingParticipant = room.getParticipant(userId);
+          if (existingParticipant) {
+            role = existingParticipant.role;
+          }
         }
 
-        // Add peer with user info
+        // Add peer with user info (this will handle cleanup of old socket if needed)
         const displayUsername = providedUsername || username;
         room.addPeer(socket.id, userId, displayUsername, role);
         socket.join(roomId);
 
-        // Update Redis
+        // Update Redis with socket tracking
         if (userId) {
-          await this.redisService.addParticipant(roomId, userId);
+          await this.redisService.addParticipant(roomId, userId, socket.id);
           if (role === 'host') {
             await this.redisService.setRoomHost(roomId, userId);
           }
           await this.redisService.setRoomInfo(roomId, room.getRoomInfo());
         }
 
-        console.log(`👤 User ${displayUsername} (${userId}) joined room: ${roomId} as ${role}`);
+        console.log(`👤 User ${displayUsername} (${userId}) ${isRejoin ? 'rejoined' : 'joined'} room: ${roomId} as ${role}`);
 
-        // Get list of existing streams
-        const peers = room.getActiveProducers(socket.id);
+        // Get list of existing streams (exclude own userId to prevent seeing own old streams)
+        const peers = room.getActiveProducers(socket.id, userId);
         const participants = room.getAllParticipants();
 
-        // Notify others about new participant
-        socket.to(roomId).emit('participantJoined', {
-          userId,
-          username: displayUsername,
-          role,
-          socketId: socket.id,
-        });
+        // Notify others about new participant (only if not a rejoin, or if it's a visible rejoin)
+        if (!isRejoin) {
+          socket.to(roomId).emit('participantJoined', {
+            userId,
+            username: displayUsername,
+            role,
+            socketId: socket.id,
+          });
+        } else {
+          // On rejoin, notify others that user is back with new socket
+          socket.to(roomId).emit('participantRejoined', {
+            userId,
+            username: displayUsername,
+            role,
+            socketId: socket.id,
+          });
+        }
 
         callback({
           rtpCapabilities: room.router?.rtpCapabilities,
@@ -464,30 +505,51 @@ export class SocketHandler {
       const roomId = this.getRoomId(socket);
       const currentUserId = this.getUserId(socket);
       const currentUsername = this.getUsername(socket) || 'Unknown';
+      
       if (roomId && currentUserId) {
         const room = this.roomManager.getRoom(roomId);
         if (room) {
+          // Remove peer from room (closes all producers/consumers)
           room.removePeer(socket.id);
-          await this.redisService.removeParticipant(roomId, currentUserId);
+          
+          // Remove socket from Redis tracking
+          await this.redisService.removeParticipant(roomId, currentUserId, socket.id);
+          
+          // Check if user has any remaining active sockets
+          const hasOtherSockets = await this.redisService.hasActiveSockets(roomId, currentUserId);
+          
+          if (!hasOtherSockets) {
+            // User has no more active sockets, they've fully left
+            console.log(`  👋 User ${currentUserId} has fully left room ${roomId}`);
+            
+            // Notify others with socketId for cleanup
+            this.io.to(roomId).emit('participantLeft', { 
+              userId: currentUserId,
+              socketId: socket.id,
+              fullyLeft: true
+            });
 
-          // Notify others with socketId for cleanup
-          this.io.to(roomId).emit('participantLeft', { 
-            userId: currentUserId,
-            socketId: socket.id
-          });
-
-          // Send system message
-          if (room.settings.allowChat) {
-            const systemMessage = {
-              id: `${Date.now()}-system`,
-              userId: 'system',
-              username: 'System',
-              message: `${currentUsername} left the room`,
-              timestamp: Date.now(),
-              type: 'system' as const,
-              roomId,
-            };
-            this.io.to(roomId).emit('chat:newMessage', systemMessage);
+            // Send system message
+            if (room.settings.allowChat) {
+              const systemMessage = {
+                id: `${Date.now()}-system`,
+                userId: 'system',
+                username: 'System',
+                message: `${currentUsername} left the room`,
+                timestamp: Date.now(),
+                type: 'system' as const,
+                roomId,
+              };
+              this.io.to(roomId).emit('chat:newMessage', systemMessage);
+            }
+          } else {
+            // User still has other sockets (multi-tab scenario), just notify about this socket
+            console.log(`  🔄 User ${currentUserId} still has other active sockets`);
+            this.io.to(roomId).emit('participantLeft', { 
+              userId: currentUserId,
+              socketId: socket.id,
+              fullyLeft: false
+            });
           }
         }
       }

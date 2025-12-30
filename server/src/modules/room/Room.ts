@@ -32,8 +32,28 @@ export class Room {
         this.router = router;
     }
 
-    // Add a user to the room
+    // Add a user to the room (handles rejoin scenarios)
     public addPeer(socketId: string, userId?: string, username?: string, role?: UserRole) {
+        let existingParticipant: ParticipantInfo | undefined;
+
+        // If user already has a different socket in this room, remove the old one (rejoin scenario)
+        if (userId) {
+            existingParticipant = this.participants.get(userId);
+            if (existingParticipant && existingParticipant.socketId !== socketId) {
+                console.log(`🔄 User ${userId} rejoining with new socket. Cleaning up old socket: ${existingParticipant.socketId}`);
+                // Remove old peer
+                this.removePeer(existingParticipant.socketId);
+                // Re-fetch after removal (in case it was cleared)
+                existingParticipant = this.participants.get(userId);
+            }
+        }
+
+        // Check if socketId already exists (shouldn't happen, but safety check)
+        if (this.peers.has(socketId)) {
+            console.warn(`⚠️ Socket ${socketId} already exists in room. Removing old entry.`);
+            this.removePeer(socketId);
+        }
+
         const peer: Peer = {
             id: socketId,
             userId,
@@ -54,10 +74,10 @@ export class Room {
 
             const participant: ParticipantInfo = {
                 userId,
-                username: username || `User ${userId.slice(0, 8)}`,
-                role: role || 'participant',
+                username: username || existingParticipant?.username || `User ${userId.slice(0, 8)}`,
+                role: role || existingParticipant?.role || 'participant', // Preserve role on rejoin if exists
                 socketId,
-                joinedAt: Date.now(),
+                joinedAt: existingParticipant?.joinedAt || Date.now(), // Preserve original join time
                 isMuted: false,
                 isVideoEnabled: true,
             };
@@ -127,32 +147,82 @@ export class Room {
         return this.isHost(userId) || this.isSubHost(userId);
     }
 
-    // Remove a user
+    // Remove a user (properly closes all producers/consumers)
     public removePeer(socketId: string) {
         const peer = this.peers.get(socketId);
         if (!peer) return;
 
-        // Close everything
-        peer.transports.forEach(t => t.close());
+        console.log(`🧹 Removing peer ${socketId} (userId: ${peer.userId})`);
+
+        // Close all producers (this stops media streams)
+        peer.producers.forEach((producer, producerId) => {
+            try {
+                producer.close();
+                console.log(`  ✅ Closed producer ${producerId}`);
+            } catch (err) {
+                console.warn(`  ⚠️ Error closing producer ${producerId}:`, err);
+            }
+        });
+
+        // Close all consumers
+        peer.consumers.forEach((consumer, consumerId) => {
+            try {
+                consumer.close();
+                console.log(`  ✅ Closed consumer ${consumerId}`);
+            } catch (err) {
+                console.warn(`  ⚠️ Error closing consumer ${consumerId}:`, err);
+            }
+        });
+
+        // Close all transports
+        peer.transports.forEach((transport, transportId) => {
+            try {
+                transport.close();
+                console.log(`  ✅ Closed transport ${transportId}`);
+            } catch (err) {
+                console.warn(`  ⚠️ Error closing transport ${transportId}:`, err);
+            }
+        });
+
         this.peers.delete(socketId);
 
         // Remove from participants if userId exists
+        // BUT: Only remove participant if this is their only socket
         if (peer.userId) {
             const userId = peer.userId;
-            this.participants.delete(userId);
             this.socketToUserId.delete(socketId);
-            this.subHostIds.delete(userId);
 
-            // If host left, assign new host (first sub-host or first participant)
-            if (this.hostId === userId) {
-                if (this.subHostIds.size > 0) {
-                    const newHostId = Array.from(this.subHostIds)[0];
-                    this.updateParticipantRole(newHostId, 'host');
-                } else if (this.participants.size > 0) {
-                    const newHostId = Array.from(this.participants.keys())[0];
-                    this.updateParticipantRole(newHostId, 'host');
-                } else {
-                    this.hostId = null;
+            // Check if user has other active sockets in this room
+            const hasOtherSockets = Array.from(this.socketToUserId.entries())
+                .some(([sid, uid]) => uid === userId && sid !== socketId);
+
+            if (!hasOtherSockets) {
+                // This was the last socket for this user, remove from participants
+                this.participants.delete(userId);
+                this.subHostIds.delete(userId);
+
+                // If host left, assign new host (first sub-host or first participant)
+                if (this.hostId === userId) {
+                    if (this.subHostIds.size > 0) {
+                        const newHostId = Array.from(this.subHostIds)[0];
+                        this.updateParticipantRole(newHostId, 'host');
+                    } else if (this.participants.size > 0) {
+                        const newHostId = Array.from(this.participants.keys())[0];
+                        this.updateParticipantRole(newHostId, 'host');
+                    } else {
+                        this.hostId = null;
+                    }
+                }
+            } else {
+                // User still has other sockets, just update the socketId in participant info
+                const participant = this.participants.get(userId);
+                if (participant) {
+                    // Update to another socket if available
+                    const otherSocketId = Array.from(this.socketToUserId.entries())
+                        .find(([sid, uid]) => uid === userId && sid !== socketId)?.[0];
+                    if (otherSocketId) {
+                        participant.socketId = otherSocketId;
+                    }
                 }
             }
         }
@@ -292,17 +362,21 @@ export class Room {
 
         await consumer.resume();
     }
-    // 6. Get all active producers (for new joiners)
-    public getActiveProducers(excludeSocketId: string) {
-        const producerList: { producerId: string, socketId: string }[] = [];
+    // 6. Get all active producers (for new joiners) - excludes own socket and includes metadata
+    public getActiveProducers(excludeSocketId: string, excludeUserId?: string) {
+        const producerList: { producerId: string, socketId: string, kind: string, appData: any }[] = [];
 
         this.peers.forEach((peer, peerId) => {
-            if (peerId === excludeSocketId) return; // Don't send my own streams back to me
+            // Don't send my own streams back to me (by socketId or userId)
+            if (peerId === excludeSocketId) return;
+            if (excludeUserId && peer.userId === excludeUserId) return;
 
             peer.producers.forEach(producer => {
                 producerList.push({
                     producerId: producer.id,
-                    socketId: peer.id
+                    socketId: peer.id,
+                    kind: producer.kind,
+                    appData: producer.appData || {}
                 });
             });
         });

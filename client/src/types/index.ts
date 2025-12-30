@@ -59,7 +59,7 @@ export interface ChatMessage {
 // Responses from the server
 export interface JoinRoomResponse {
   rtpCapabilities: types.RtpCapabilities;
-  peers: Array<{ producerId: string; socketId: string }>;
+  peers: Array<{ producerId: string; socketId: string; kind: string; appData: any }>;
   roomInfo: RoomInfo;
   participants: ParticipantInfo[];
   userRole: UserRole;
@@ -94,6 +94,8 @@ export interface NewProducerEvent {
   socketId: string;
   userId?: string;
   username?: string;
+  kind: types.MediaKind;
+  appData: any;
 }
 
 export interface ParticipantJoinedEvent {
@@ -111,4 +113,13 @@ export interface ParticipantUpdatedEvent {
 
 export interface ParticipantLeftEvent {
   userId: string;
+  socketId?: string;
+  fullyLeft?: boolean;
+}
+
+export interface ParticipantRejoinedEvent {
+  userId: string;
+  username: string;
+  role: UserRole;
+  socketId: string;
 }

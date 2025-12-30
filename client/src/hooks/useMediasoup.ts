@@ -140,21 +140,40 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
             socket.on('newProducer', newProducerHandler);
 
             // Listen for participant leaving to cleanup peers
-            const participantLeftHandler = ({ socketId }: any) => {
+            const participantLeftHandler = ({ socketId, userId, fullyLeft }: any) => {
                 if (socketId) {
-                    console.log(`🧹 Cleaning up peer: ${socketId}`);
+                    console.log(`🧹 Cleaning up peer: ${socketId} (userId: ${userId}, fullyLeft: ${fullyLeft})`);
                     setPeers(prev => {
                         // Remove all streams from this socket (including screen shares)
-                        return prev.filter(p => !p.id.startsWith(socketId));
+                        // Also filter by userId if provided to catch all instances
+                        if (userId) {
+                            // This will be handled by filtering socketId, but we can also check userId if stored
+                            return prev.filter(p => {
+                                const peerSocketId = p.isScreenShare ? p.id.replace('-screen', '') : p.id;
+                                return peerSocketId !== socketId;
+                            });
+                        }
+                        return prev.filter(p => {
+                            const peerSocketId = p.isScreenShare ? p.id.replace('-screen', '') : p.id;
+                            return peerSocketId !== socketId;
+                        });
                     });
                 }
             };
             socket.on('participantLeft', participantLeftHandler);
 
             // --- CRITICAL FIX: CONSUME EXISTING USERS NOW ---
+            // Get our own socketId to filter out our own streams
+            const ownSocketId = socket.id;
             for (const peer of existingPeers) {
-                console.log(`♻️ Consuming existing peer ${peer.socketId}`);
-                await consume(currentDevice, recvTransport.current!, peer.producerId, peer.socketId, false);
+                // Skip our own streams (shouldn't happen, but safety check)
+                if (peer.socketId === ownSocketId) {
+                    console.log(`⚠️ Skipping own stream: ${peer.producerId}`);
+                    continue;
+                }
+                const isScreenShare = peer.appData?.source === 'screen';
+                console.log(`♻️ Consuming existing peer ${peer.socketId} (${peer.kind}${isScreenShare ? ' - SCREEN SHARE' : ''})`);
+                await consume(currentDevice, recvTransport.current!, peer.producerId, peer.socketId, isScreenShare);
             }
 
             // Cleanup function
@@ -167,6 +186,12 @@ export const useMediasoup = (socket: Socket | null, roomId: string) => {
 
     const consume = async (currentDevice: Device, transport: Transport, producerId: string, socketId: string, isScreenShare: boolean = false) => {
         if (!socket) return;
+
+        // Safety check: Don't consume our own streams
+        if (socketId === socket.id) {
+            console.warn(`⚠️ Attempted to consume own stream, skipping: ${producerId}`);
+            return;
+        }
 
         const { rtpCapabilities } = currentDevice;
 
