@@ -2,8 +2,9 @@ import React, { createContext, useContext, useState, useCallback, ReactNode } fr
 import { AuthService } from '../services/auth.service';
 
 interface AuthContextType {
-  user: { userId: string; username: string; token: string } | null;
-  login: (username: string) => Promise<void>;
+  user: { userId: string; username: string; email?: string; token: string } | null;
+  login: (username: string, password: string) => Promise<void>;
+  signup: (username: string, email: string | undefined, password: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -11,7 +12,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<{ userId: string; username: string; token: string } | null>(() => {
+  const [user, setUser] = useState<{ userId: string; username: string; email?: string; token: string } | null>(() => {
     // Try to load from localStorage
     const stored = localStorage.getItem('auth_user');
     if (stored) {
@@ -24,20 +25,43 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return null;
   });
 
-  const login = useCallback(async (username: string) => {
+  const login = useCallback(async (username: string, password: string) => {
     const authService = new AuthService();
-    const userData = await authService.login(username);
+    const response = await authService.login(username, password);
+    const userData = {
+      userId: response.user.userId,
+      username: response.user.username,
+      email: response.user.email,
+      token: response.token,
+    };
     setUser(userData);
     localStorage.setItem('auth_user', JSON.stringify(userData));
   }, []);
 
-  const logout = useCallback(() => {
-    setUser(null);
-    localStorage.removeItem('auth_user');
+  const signup = useCallback(async (username: string, email: string | undefined, password: string) => {
+    const authService = new AuthService();
+    const response = await authService.signup(username, email, password);
+    const userData = {
+      userId: response.user.userId,
+      username: response.user.username,
+      email: response.user.email,
+      token: response.token,
+    };
+    setUser(userData);
+    localStorage.setItem('auth_user', JSON.stringify(userData));
   }, []);
 
+  const logout = useCallback(async () => {
+    if (user?.token) {
+      const authService = new AuthService();
+      await authService.logout(user.token);
+    }
+    setUser(null);
+    localStorage.removeItem('auth_user');
+  }, [user]);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

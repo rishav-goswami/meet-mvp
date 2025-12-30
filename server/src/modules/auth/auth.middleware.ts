@@ -34,14 +34,20 @@ export async function authenticateSocket(socket: Socket): Promise<AuthenticatedS
     return null;
   }
 
-  // Get user from Redis
-  const user = await authService.getUser(payload.userId);
+  // Get user from SQLite database
+  const user = authService.getUser(payload.userId);
   if (!user) {
     return null;
   }
 
+  // Verify session is still valid
+  const isSessionValid = authService.verifySession(token);
+  if (!isSessionValid) {
+    return null;
+  }
+
   // Update socket ID
-  await authService.updateUserSocket(payload.userId, socket.id);
+  authService.updateUserSocket(payload.userId, socket.id);
 
   (socket as AuthenticatedSocket).userId = user.userId;
   (socket as AuthenticatedSocket).username = user.username;

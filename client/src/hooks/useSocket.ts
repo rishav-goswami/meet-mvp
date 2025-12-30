@@ -1,7 +1,19 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3000';
+const getSocketUrl = () => {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  // In development, always connect directly to backend
+  if (import.meta.env.DEV) {
+    return 'http://localhost:3000';
+  }
+  // In production, use the same origin (nginx)
+  return window.location.origin;
+};
+
+const SOCKET_URL = getSocketUrl();
 
 export const useSocket = (token?: string) => {
     const [socket, setSocket] = useState<Socket | null>(null);
@@ -17,8 +29,11 @@ export const useSocket = (token?: string) => {
         console.log("🔐 Attempting secure connection...");
 
         const newSocket = io(SOCKET_URL, {
-            transports: ['websocket'],
+            transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
             auth: { token },
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
         });
 
         newSocket.on('connect', () => {

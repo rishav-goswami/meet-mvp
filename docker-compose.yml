@@ -37,6 +37,8 @@ services:
       - ./server:/app
       # CRITICAL: Keep container's node_modules, don't overwrite with local Windows ones
       - /app/node_modules
+      # Mount data directory for SQLite database
+      - ./server/data:/app/data
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379

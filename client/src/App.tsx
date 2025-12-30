@@ -9,7 +9,9 @@ import { Lobby } from './components/Lobby';
 import { ChatPanel } from './components/Chat/ChatPanel';
 import { HostControlPanel } from './components/HostControls/HostControlPanel';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthPage } from './components/Auth/AuthPage';
 import { ParticipantInfo, UserRole } from './types';
+
 function AppContent() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
@@ -18,10 +20,15 @@ function AppContent() {
   const [participants, setParticipants] = useState<ParticipantInfo[]>([]);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isHostControlsOpen, setIsHostControlsOpen] = useState(false);
-  const { user, login } = useAuth();
+  const { user } = useAuth();
 
-  // Get token from user or use legacy secret
-  const token = user?.token
+  // Show auth page if not authenticated
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  // Get token from user
+  const token = user.token;
   const { socket, isConnected } = useSocket(token);
 
   // We only run useMediasoup IF we have a socket and a room
@@ -36,15 +43,8 @@ function AppContent() {
       return;
     }
 
-    // Login user if not already logged in
-    let displayUsername = providedUsername || username;
-    if (!user) {
-      if (!displayUsername) {
-        displayUsername = prompt('Enter your name:') || `User ${Date.now()}`;
-      }
-      await login(displayUsername);
-    }
-
+    // Use authenticated user's username or provided username
+    const displayUsername = providedUsername || user.username;
     setUsername(displayUsername);
     setRoomId(id);
   };
